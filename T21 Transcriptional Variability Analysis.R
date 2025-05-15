@@ -15,7 +15,7 @@ library(ggpubr)
 setwd("~")
 
 ## load in Seurat object from preprocessing & calculate noise ##
-cm_only <- readRDS("T21/cm_only.rds")
+cm_only <- readRDS("../T21/cm_only.rds")
 conditions <- c("WT_A1", "WT_A7", "Dp1Tyb")
 by_condition <- SplitObject(cm_only, split.by = "orig.ident")
 Idents(cm_only) <- cm_only@meta.data$orig.ident
@@ -43,7 +43,7 @@ noise_by_cond <- lapply(merged_conds, calc_noise)
 
 # save noise calculations
 m_str_conds <- c("WT", "Dp1Tyb")
-path_to_data <- "T21/" # TODO: change this for each dataset 
+path_to_data <- "../T21/" # TODO: change this for each dataset 
 for (i in 1:length(noise_by_cond)) {
   saveRDS(noise_by_cond[[i]], file = paste(path_to_data, m_str_conds[[i]], "_noise.rds", sep = ""))
 }
@@ -171,13 +171,13 @@ abs_change_VMR <- raw_noise_change_dfs[[2]] %>% mutate(change = abs(change))
 dp1tyb_exp_abs_vmr_comb_all <- plot_avg_exp_noise_change(abs_change_VMR, dp1tyb_wt_avg_exp_norm, 2.75, 0.9) 
 cor.test(abs(dp1tyb_exp_abs_vmr_comb_all[[1]]$change), dp1tyb_exp_abs_vmr_comb_all[[1]]$avg_exp, method = "kendall")
 
-# Test correlation between absolute change in VMR and gene length, gene GC content
-#' Annotates genes with gene length and gene GC content
+# Test correlation between absolute change in VMR and gene length
+#' Annotates genes with gene length 
 #' @param noise data.frame of genes 
-#' @returns data.frame of genes annotated with gene length and gene GC content
-annotat_length_gc <- function(noise) {
+#' @returns data.frame of genes annotated with gene length 
+annotat_length <- function(noise) {
   annotat <- getBM(
-    attributes = c("external_gene_name", "chromosome_name", "start_position", "end_position", "strand", "percentage_gene_gc_content"),
+    attributes = c("external_gene_name", "chromosome_name", "start_position", "end_position", "strand"),
     filters = "external_gene_name",
     values = rownames(noise),
     mart = ensembl
@@ -201,28 +201,70 @@ plot_gene_length <- function(df, x, y) {
                  panel.background = element_blank(), axis.line = element_line(colour = "black")))
 }
 
-#' Plots absolute change in VMR against gene GC content, with the correlation coefficient
-#' @param df data.frame of genes and their gene GC content and absolute change in VMR
+dp1tyb_vmr_annot <- annotat_length(raw_noise_change_dfs[[2]])
+
+# test for correlation & generate plot
+cor.test(abs(dp1tyb_vmr_annot$change), dp1tyb_vmr_annot$gene_length, method = "kendall")
+dp1tyb_gene_length <- plot_gene_length(dp1tyb_vmr_annot, 12, 0.9)
+
+# Test promoter GC content with absolute change in VMR
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(GenomicFeatures)
+library(Biostrings)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+
+# set up references
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+genome <- BSgenome.Mmusculus.UCSC.mm10
+all_promoters <- promoters(genes(txdb), upstream = 1000, downstream = 1000)
+
+#' Calculates promoter GC content 
+#' @param noise_df data.frame of genes and their absolute change in VMR
+#' @returns data.frame of genes and their absolute change in VMR and promoter GC content as a percentage
+get_promoter_GC_content <- function(noise_df) {
+  # get promoter locations
+  genes <- mapIds(org.Mm.eg.db, keys = rownames(noise_df), column = "ENTREZID", keytype = "SYMBOL")
+  promoters <- all_promoters[names(all_promoters) %in% genes]
+  
+  # get promoter sequences
+  promoter_seqs <- getSeq(genome, promoters)
+  
+  # calculate GC content
+  gc_content <- letterFrequency(promoter_seqs, letters = c("G", "C"), as.prob = TRUE)
+  gc_percent <- rowSums(gc_content)
+  
+  # reformat into data.frame
+  gc_content_df <- data.frame(
+    Gene = mapIds(org.Mm.eg.db, keys = names(promoter_seqs), column = "SYMBOL", keytype = "ENTREZID"),
+    GC_Content = gc_percent*100
+  )
+  
+  promoter_gc_vmr <- subset(merge(noise_df, gc_content_df, by.x = 0, by.y = "Gene"), select = -c(Row.names))
+  return(promoter_gc_vmr)
+}
+
+#' Plots absolute change in VMR against any given characteristic (promoter GC content, etc.), with the correlation coefficient
+#' @param df data.frame of genes and their gene length and absolute change in VMR
+#' @param characteristic String column name of the characteristic of interest
+#' @param str_char String name for the characteristic (x-axis title)
 #' @param x x-coordinate of the correlation coefficient
 #' @param y y-coordinate of the correlation coefficient
 #' @returns ggplot object
-plot_gc_content <- function(df, x, y) {
-  return(ggplot(df, aes(x = percentage_gene_gc_content, y = abs(change))) + geom_point() + 
-           labs(x = "Gene GC Content %", y = "Absolute Change in VMR") + 
+plot_correlation <- function(df, characteristic, str_char, x, y) {
+  return(ggplot(df, aes(x = .data[[characteristic]], y = abs(change))) + geom_point() + 
+           labs(x = str_char, y = "Absolute Change in VMR") + 
            geom_smooth(se = T) + 
            stat_cor(aes(label = after_stat(r.label)), method = "kendall", cor.coef.name = "tau", label.x = x, label.y = y, size = 8, color = "darkblue") + 
            theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
                  panel.background = element_blank(), axis.line = element_line(colour = "black")))
 }
 
-dp1tyb_vmr_annot <- annotat_length_gc(raw_noise_change_dfs[[2]])
-
-# test for correlation & generate plots
-cor.test(abs(dp1tyb_vmr_annot$change), dp1tyb_vmr_annot$gene_length, method = "kendall")
-cor.test(abs(dp1tyb_vmr_annot$change), dp1tyb_vmr_annot$percentage_gene_gc_content, method = "kendall")
-
-dp1tyb_gene_length <- plot_gene_length(dp1tyb_vmr_annot, 10, 1)
-dp1tyb_gc_content <- plot_gc_content(dp1tyb_vmr_annot, 52, 1)
+# calculate promoter GC content, plot, & test
+promoter_gc <- get_promoter_GC_content(raw_noise_change_dfs[[2]])
+promoter_gc_p <- plot_correlation(promoter_gc, "GC_Content", "Promoter GC Content %", 59, 1.1)
+cor.test(abs(promoter_gc$change), promoter_gc$GC_Content, method = "kendall")
 
 # Test correlation between absolute change in VMR and gene phylostrata
 library(stringr)
@@ -247,11 +289,11 @@ plot_genEra_boxplot <- function(df, cc, x_cord, y_cord) {
 
 # test for correlation & plot
 cor.test(abs(vmr_change_w_genEra_age$change), vmr_change_w_genEra_age$Phylostratum, method = "kendall")
-dp1tyb_genEra <- plot_genEra_boxplot(vmr_change_w_genEra_age, 0.027, 14, 0.5)
+dp1tyb_genEra <- plot_genEra_boxplot(vmr_change_w_genEra_age, 0.027, 16, 0.6)
 
 # combine plots (S6 Fig)
 (dp1tyb_exp_abs_vmr_comb_all[[2]] | dp1tyb_gene_length) /
-  (dp1tyb_gc_content | dp1tyb_genEra)  & 
+  (promoter_gc_p | dp1tyb_genEra)  & 
   theme(plot.margin = unit(c(0.8, 0.8, 0.8, 0.8), "cm"), axis.title = element_text(size = 14), axis.text = element_text(size = 12))
 
 #### Compare against differential expression ####
@@ -267,7 +309,6 @@ get_degs <- function(str_test) {
   Dp1Tyb <- FindMarkers(cm_only, ident.1 = c("WT_A1", "WT_A7"), ident.2 = "Dp1Tyb", verbose = T, recorrect_umi = FALSE)
   return(filter_degs(Dp1Tyb))
 }
-
 
 wilcox_degs <- get_degs("wilcox")
 
