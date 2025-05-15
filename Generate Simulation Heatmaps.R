@@ -24,7 +24,7 @@ load_rel_csvs <- function(dist, str_mod) { # this should return a list of 4 data
   var_df <- read.csv(paste("Simulations/", dist, "_Var_", str_mod, ".csv", sep = ""), header = T, row.names = 1, check.names = F)
   entropy_df <- read.csv(paste("Simulations/", dist, "_Entropy_", str_mod, ".csv", sep = ""), header = T, row.names = 1, check.names = F)
   all_dfs <- list(gini_df, vmr_df, var_df, entropy_df)
-  rev_dfs <- lapply(all_dfs, function(df) df %>% arrange(desc(row_number())))
+  rev_dfs <- lapply(all_dfs, function(df) apply(df, 2, rev))
   return(rev_dfs)
 }
 
@@ -46,23 +46,13 @@ load_wo_flip_csvs <- function(dist, str_mod) { # this should return a list of 4 
 #' @param dist String name of the distribution used to sample
 #' @returns List of data.frames
 load_fix_dispersion_csvs <- function(dist) {
-  gini_df <- read.csv(paste("Simulations/", dist, "_Gini_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
-  vmr_df<- read.csv(paste("Simulations/", dist, "_VMR_","fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
-  var_df <- read.csv(paste("Simulations/", dist, "_Var_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
-  entropy_df <- read.csv(paste("Simulations/", dist, "_Entropy_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
+  gini_df <- read.csv(paste("Simulations/Luria CSVs/", dist, "_Gini_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
+  vmr_df<- read.csv(paste("Simulations/Luria CSVs/", dist, "_VMR_","fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
+  var_df <- read.csv(paste("Simulations/Luria CSVs/", dist, "_Var_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
+  entropy_df <- read.csv(paste("Simulations/Luria CSVs/", dist, "_Entropy_", "fix_dispersion.csv", sep = ""), header = T, row.names = 1, check.names = F)
   all_dfs <- list(gini_df, vmr_df, var_df, entropy_df)
-  rev_dfs <- lapply(all_dfs, function(df) df %>% tibble::rownames_to_column() %>% arrange(desc(row_number())))
-  rev_dfs <- lapply(rev_dfs, fix_rownames)
+  rev_dfs <- lapply(all_dfs, function(df) apply(df, 2, rev))
   return(rev_dfs)
-}
-
-#' Changes data.frame rownames to match after reversing row order 
-#' @param df data.frame
-#' @returns data.frame with the rownames reversed
-fix_rownames <- function(df) {
-  out <- df[, -1]
-  rownames(out) <- df[, 1]
-  return(out)
 }
 
 #' Truncates the rownames of a data.frame to a specified number of significant figures
@@ -78,22 +68,22 @@ truncate_df_rownames <- function(df, dig) {
 
 ## Function calls to load in CSVs generated from Simulations Clean.R ##
 # Poisson
-pois_ngene_x_ncell <- load_fix_dispersion_csvs("Poisson_2")
-pois_ngene_x_dispersion <- lapply(load_rel_csvs("Poisson_3", "vary_ngenes"), truncate_df_rownames, 3)
-pois_ncell_x_dispersion <- lapply(load_rel_csvs("Poisson_3", "vary_ncells"), truncate_df_rownames, 3)
+pois_ngene_x_ncell <- load_fix_dispersion_csvs("Poisson")
+pois_ngene_x_dispersion <- lapply(load_rel_csvs("Poisson", "vary_ngenes"), truncate_df_rownames, 3)
+pois_ncell_x_dispersion <- lapply(load_rel_csvs("Poisson", "vary_ncells"), truncate_df_rownames, 3)
 
 # Negative Binomial
-nb_ngene_x_dispersion <- lapply(load_wo_flip_csvs("Negative_Binomial_2", "vary_ngenes"), truncate_df_rownames, 4)
-nb_ncell_x_dispersion <- lapply(load_wo_flip_csvs("Negative_Binomial_fix_prob", "vary_ncells"), truncate_df_rownames, 4)
-nb_ngene_x_ncell <- load_fix_dispersion_csvs("Negative_Binomial_fix_prob")
+nb_ngene_x_dispersion <- lapply(load_wo_flip_csvs("Negative_Binomial", "vary_ngenes"), truncate_df_rownames, 4)
+nb_ncell_x_dispersion <- lapply(load_wo_flip_csvs("Negative_Binomial", "vary_ncells"), truncate_df_rownames, 4)
+nb_ngene_x_ncell <- load_fix_dispersion_csvs("Negative_Binomial")
 
 # Beta Poisson
-bp_ngene_x_dispersion <- lapply(load_rel_csvs("Beta-Poisson_3", "vary_ngenes"), truncate_df_rownames, 3)
-bp_ncell_x_dispersion <- lapply(load_rel_csvs("Beta-Poisson_3", "vary_ncells"), truncate_df_rownames, 3)
+bp_ngene_x_dispersion <- lapply(load_rel_csvs("Beta-Poisson", "vary_ngenes"), truncate_df_rownames, 3)
+bp_ncell_x_dispersion <- lapply(load_rel_csvs("Beta-Poisson", "vary_ncells"), truncate_df_rownames, 3)
 bp_ngene_x_ncell <- lapply(load_fix_dispersion_csvs("Beta-Poisson"), truncate_df_rownames, 3)
 
 # Uniform
-unif_ngene_x_dispersion <- lapply(load_rel_csvs("Uniform_2", "vary_ngenes"), truncate_df_rownames, 3)
+unif_ngene_x_dispersion <- lapply(load_rel_csvs("Uniform", "vary_ngenes"), truncate_df_rownames, 3)
 unif_ncell_x_dispersion <- lapply(load_rel_csvs("Uniform", "vary_ncells"), truncate_df_rownames, 3)
 unif_ngene_x_ncell <- load_fix_dispersion_csvs("Uniform")
 
@@ -386,6 +376,3 @@ abline(0, 1, col = "red", lwd = 2, lty = 2)  # Dashed red line
 not_zeros_sample <- rnbinom(1000, 10, 0.5)
 plot(Lc(not_zeros_sample), col = "blue", lwd = 2, main = "", xlab = "Cumulative share of people, ranked by increasing income", ylab = "Cumulative share of income")
 abline(0, 1, col = "red", lwd = 2, lty = 2)  # Dashed red line
-
-
-
