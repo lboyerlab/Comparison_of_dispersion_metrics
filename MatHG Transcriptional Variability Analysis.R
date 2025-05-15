@@ -10,7 +10,7 @@ library(ggrepel)
 library(plyr)
 
 ## load in Seurat object from preprocessing & calculate noise ##
-path_to_data <- "MatHG/"
+path_to_data <- "../MatHG/"
 metrics <- list("Gini", "VMR", "Variance", "Entropy") # Gini, VMR, Variance, Entropy
 
 cm_only <- readRDS(paste(path_to_data, "cm_only.rds", sep = ""))
@@ -164,7 +164,7 @@ e11_avg_exp_norm <- make_avg_exp_df(norm_avg_exp[[2]], norm_avg_exp[[4]])
 
 # combine mean normalized expression with absolute change in VMR
 abs_change_VMR <- lapply(raw_noise_change_dfs[[2]], function(df) df %>% mutate(change = abs(change)))
-e9_exp_vmr_comb <- plot_avg_exp_noise_change(abs_change_VMR[[1]], e9_avg_exp_norm, 3, 1.1)
+e9_exp_vmr_comb <- plot_avg_exp_noise_change(abs_change_VMR[[1]], e9_avg_exp_norm, 3.3, 1.15)
 e11_exp_vmr_comb <- plot_avg_exp_noise_change(abs_change_VMR[[2]], e11_avg_exp_norm, 3.5, 1.25)
 
 # Kendall's tau for correlation testing
@@ -172,6 +172,8 @@ cor.test(abs(e9_exp_vmr_comb[[1]]$change), e9_exp_vmr_comb[[1]]$avg_exp, method 
 cor.test(abs(e11_exp_vmr_comb[[1]]$change), e11_exp_vmr_comb[[1]]$avg_exp, method = "kendall")
 
 # Investigate how expression threshold effects the correlation coefficient 
+avg_exp_norm <- list(e9_avg_exp_norm, e11_avg_exp_norm)
+
 #' Finds the correlation coefficient between average normalized expression and absolute change in VMR given a cutoff for low expression
 #' @param cutoff average normalized expression cutoff below which we will not consider genes 
 #' @returns Kendall's tau 
@@ -191,13 +193,13 @@ cutoff_plot <- ggplot(cutoff_tau, aes(x = cutoff, y = tau)) + geom_point() + geo
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
         panel.background = element_blank(), axis.line = element_line(colour = "black"))
 
-# Test correlation between absolute change in VMR and gene length, gene GC content
-#' Annotates genes with gene length and gene GC content
+# Test correlation between absolute change in VMR and gene length
+#' Annotates genes with gene length
 #' @param noise data.frame of genes 
-#' @returns data.frame of genes annotated with gene length and gene GC content
-annotat_length_gc <- function(noise) {
+#' @returns data.frame of genes annotated with gene length
+annotat_length <- function(noise) {
   annotat <- getBM(
-    attributes = c("external_gene_name", "chromosome_name", "start_position", "end_position", "strand", "percentage_gene_gc_content"),
+    attributes = c("external_gene_name", "chromosome_name", "start_position", "end_position", "strand"),
     filters = "external_gene_name",
     values = rownames(noise),
     mart = ensembl
@@ -221,37 +223,85 @@ plot_gene_length <- function(df, x, y) {
                  panel.background = element_blank(), axis.line = element_line(colour = "black")))
 }
 
-#' Plots absolute change in VMR against gene GC content, with the correlation coefficient
-#' @param df data.frame of genes and their gene GC content and absolute change in VMR
+e9_vmr_annot <- annotat_length(raw_noise_change_dfs[[2]][[1]])
+e11_vmr_annot <- annotat_length(raw_noise_change_dfs[[2]][[2]])
+
+# Fig 4c-d
+e9_gene_length <- plot_gene_length(e9_vmr_annot, 12.5, 1.1)
+e11_gene_length <- plot_gene_length(e11_vmr_annot, 12, 1.3)
+
+# Calculate Kendall's rank correlation coefficient for these comparisons
+cor.test(abs(e9_vmr_annot$change), e9_vmr_annot$gene_length, method = "kendall")
+cor.test(abs(e11_vmr_annot$change), e11_vmr_annot$gene_length, method = "kendall")
+
+# Test promoter GC content with absolute change in VMR
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(GenomicFeatures)
+library(Biostrings)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+
+# set up references
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+genome <- BSgenome.Mmusculus.UCSC.mm10
+all_promoters <- promoters(genes(txdb), upstream = 1000, downstream = 1000)
+
+#' Calculates promoter GC content 
+#' @param noise_df data.frame of genes and their absolute change in VMR
+#' @returns data.frame of genes and their absolute change in VMR and promoter GC content as a percentage
+get_promoter_GC_content <- function(noise_df) {
+  # get promoter locations
+  genes <- mapIds(org.Mm.eg.db, keys = rownames(noise_df), column = "ENTREZID", keytype = "SYMBOL")
+  promoters <- all_promoters[names(all_promoters) %in% genes]
+  
+  # get promoter sequences
+  promoter_seqs <- getSeq(genome, promoters)
+  
+  # calculate GC content
+  gc_content <- letterFrequency(promoter_seqs, letters = c("G", "C"), as.prob = TRUE)
+  gc_percent <- rowSums(gc_content)
+  
+  # reformat into data.frame
+  gc_content_df <- data.frame(
+    Gene = mapIds(org.Mm.eg.db, keys = names(promoter_seqs), column = "SYMBOL", keytype = "ENTREZID"),
+    GC_Content = gc_percent*100
+  )
+  
+  promoter_gc_vmr <- subset(merge(noise_df, gc_content_df, by.x = 0, by.y = "Gene"), select = -c(Row.names))
+  return(promoter_gc_vmr)
+}
+
+#' Plots absolute change in VMR against any given characteristic (promoter GC content, etc.), with the correlation coefficient
+#' @param df data.frame of genes and their gene length and absolute change in VMR
+#' @param characteristic String column name of the characteristic of interest
+#' @param str_char String name for the characteristic (x-axis title)
 #' @param x x-coordinate of the correlation coefficient
 #' @param y y-coordinate of the correlation coefficient
 #' @returns ggplot object
-plot_gc_content <- function(df, x, y) {
-  return(ggplot(df, aes(x = percentage_gene_gc_content, y = abs(change))) + geom_point() + 
-           labs(x = "Gene GC Content %", y = "Absolute Change in VMR") + 
+plot_correlation <- function(df, characteristic, str_char, x, y) {
+  return(ggplot(df, aes(x = .data[[characteristic]], y = abs(change))) + geom_point() + 
+           labs(x = str_char, y = "Absolute Change in VMR") + 
            geom_smooth(se = T) + 
            stat_cor(aes(label = after_stat(r.label)), method = "kendall", cor.coef.name = "tau", label.x = x, label.y = y, size = 8, color = "darkblue") + 
            theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
                  panel.background = element_blank(), axis.line = element_line(colour = "black")))
 }
 
-# Fig 4c-d
-e9_gene_length <- plot_gene_length(e9_vmr_annot, 12.5, 1.1)
-e11_gene_length <- plot_gene_length(e11_vmr_annot, 12, 1.3)
+# calculate promoter GC content for each time point, plot, & test
+e9_promoter_gc <- get_promoter_GC_content(raw_noise_change_dfs[[2]][[1]])
+e11_promoter_gc <- get_promoter_GC_content(raw_noise_change_dfs[[2]][[2]])
 
-e9_gc_content <- plot_gc_content(e9_vmr_annot, 58, 1.1)
-e11_gc_content <- plot_gc_content(e11_vmr_annot, 58, 1.4)
+e9_promoter_gc_p <- plot_correlation(e9_promoter_gc, "GC_Content", "Promoter GC Content %", 59, 1.1)
+e11_promoter_gc_p <- plot_correlation(e11_promoter_gc, "GC_Content", "Promoter GC Content %", 59, 1.4)
 
-# Calculate Kendall's rank correlation coefficient for these comparisons
-cor.test(abs(e9_vmr_annot$change), e9_vmr_annot$gene_length, method = "kendall")
-cor.test(abs(e11_vmr_annot$change), e11_vmr_annot$gene_length, method = "kendall")
-cor.test(abs(e9_vmr_annot$change), e9_vmr_annot$percentage_gene_gc_content, method = "kendall")
-cor.test(abs(e11_vmr_annot$change), e11_vmr_annot$percentage_gene_gc_content, method = "kendall")
+cor.test(abs(e9_promoter_gc$change), e9_promoter_gc$GC_Content, method = "kendall")
+cor.test(abs(e11_promoter_gc$change), e11_promoter_gc$GC_Content, method = "kendall")
 
 # Test correlation between absolute change in VMR and gene phylostrata
 library(stringr)
 
-Mus_musculus.PhyloMap <- read.csv("GenEra_Mus_musculus.csv", header = T, row.names = 1) # from Barrera-Redondo et al., generated using GenEra
+Mus_musculus.PhyloMap <- read.csv("../GenEra_Mus_musculus.csv", header = T, row.names = 1) # from Barrera-Redondo et al., generated using GenEra
 vmr_change_w_genEra_age <- lapply(raw_noise_change_dfs[[2]], function(df) merge(df, Mus_musculus.PhyloMap, by.x = "Row.names", by.y = "Gene"))
 
 #' Plots absolute change in VMR against gene phylostrata, with the correlation coefficient
@@ -278,8 +328,10 @@ e11_genEra <- plot_genEra_boxplot(vmr_change_w_genEra_age[[2]], -0.020, 15, 0.45
 
 # Generate Fig 4
 (e9_exp_vmr_comb[[2]] | e11_exp_vmr_comb[[2]] | cutoff_plot) /
-  (e9_gene_length | e9_gc_content | e9_genEra) / 
-  (e11_gene_length | e11_gc_content | e11_genEra) & theme(plot.margin = unit(c(0.8, 0.8, 0.8, 0.8), "cm"))
+  (e9_gene_length | e9_promoter_gc_p | e9_genEra) / 
+  (e11_gene_length | e11_promoter_gc_p | e11_genEra) & 
+  theme(plot.margin = unit(c(0.8, 0.8, 0.8, 0.8), "cm"), axis.title = element_text(size = 14), axis.text = element_text(size = 12))
+
 
 #### Comparing DE & Change in Transcriptional Variability ####
 #' Filters out DEGs that are not significant or that do not have a sufficiently large logFC 
@@ -317,11 +369,18 @@ wilcox_degs_abs_change <- lapply(wilcox_degs, most_change, "avg_log2FC", T, T)
 wilcox_degs_p_val <- lapply(wilcox_degs, most_change, "p_val_adj", F, F) 
 
 # plot Venn Diagrams of top DEGs vs top genes with largest absolute change in VMR
-vmr_v_degs_e9 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 100)), DEGs = rownames(wilcox_degs_abs_change[[1]])), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
+vmr_v_degs_e9 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 100)), DEGs = rownames(wilcox_degs_p_val[[1]])), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
   theme(plot.margin = margin(2, 2, 10, 2, "pt")) + coord_cartesian(clip = "off")
-vmr_v_degs_e11 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 100)), DEGs = rownames(wilcox_degs_abs_change[[2]])), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
+vmr_v_degs_e11 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 100)), DEGs = rownames(wilcox_degs_p_val[[2]])), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
   theme(plot.margin = margin(2, 2, 10, 2, "pt")) + coord_cartesian(clip = "off")
 vmr_v_degs_e9 + vmr_v_degs_e11
+
+# look at overlap between top 1000
+vmr_v_degs_e9_1000 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 1000)), DEGs = rownames(head(wilcox_degs[[1]], 1000))), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
+  theme(plot.margin = margin(2, 2, 10, 2, "pt")) + coord_cartesian(clip = "off")
+vmr_v_degs_e11_1000 <- ggvenn(list(Change_in_VMR = rownames(head(ranked_abs_noise_dfs[[2]][[1]], 1000)), DEGs = rownames(head(wilcox_degs[[2]], 1000))), fill_color = c("#E69F00", "#56B4E9"), text_size = 8, auto_scale = TRUE) + 
+  theme(plot.margin = margin(2, 2, 10, 2, "pt")) + coord_cartesian(clip = "off")
+vmr_v_degs_e9_1000 + vmr_v_degs_e11_1000
 
 # explore what's at the intersection of DEGs & genes with largest absolute change in VMR
 #' Takes a list of top DEGs and list of top genes by change in VMR and formats it so it can be printed nicely
@@ -554,4 +613,3 @@ tgfb_genes_noise <- raw_noise_change_dfs[[2]][[1]][rownames(raw_noise_change_dfs
 tgfb_genes_noise <- tgfb_genes_noise[order(abs(tgfb_genes_noise$change), decreasing = T), ] 
 DotPlot(cm_only, features = rownames(tgfb_genes_noise)[1:30], split.by = "orig.ident", cols = "RdBu", scale = F) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 add_fc_and_scatterplot(tgfb_genes_noise, e9_all_genes_fc_, wilcox_degs[[1]], -0.075, 0.05) # S7 Fig
-
